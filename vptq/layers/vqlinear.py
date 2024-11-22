@@ -31,25 +31,12 @@ class VQuantLinear(nn.Module):
         enable_norm: bool = False,
         enable_perm: bool = False,
         is_indice_packed: bool = False,
-        # configuration
         bias: bool = False,
         vector_quant_dim: str = "out",
-        # weight_scale=None,
-        # weight_bias=None,
         device=None,
         dtype=None,
         debug=False,
         enable_proxy_error=True,
-        # enable_outlier: bool = False,
-        # outlier_vector_len: int = 0,
-        # outlier_num_centroids: int = -1,
-        # outlier_num_res_centroids: int = -1,
-        # linear: nn.Linear,
-        # vector quantization
-        # res_centroids: torch.Tensor = None,
-        # res_indices: torch.Tensor = None,
-        # centroids: torch.Tensor,
-        # indices: torch.Tensor,
     ):
         super().__init__()
 
@@ -85,32 +72,20 @@ class VQuantLinear(nn.Module):
         # to reduce index size and bypass nccl check
         self.indices_as_float = indices_as_float
         self.is_indice_packed = is_indice_packed
-        # # quantization
-        # self.vector_lens = vector_lens
-        # self.num_centroids = num_centroids
-        # self.num_res_centroids = num_res_centroids
 
         # TODO: FIX magic number
         self.vector_len = vector_lens[1]
         self.num_centroids = num_centroids[1]
         self.num_res_centroids = num_res_centroids[1]
 
-        # group_num = num_codebooks
-        # self.group_num = group_num
         self.group_num = group_num
         self.num_codebooks = self.group_num
         self.outlier_size = outlier_size
-        # print(f'group_num: {self.group_num}, group_size: {self.group_size}, '
-        #       f'num_codebooks: {self.num_codebooks}')
-        # the number of vector in group
 
-        # set vector quantization parameters
-        # current implementation only supports vector_len = 'out'
         assert vector_quant_dim in ["in", "out"]
         assert vector_quant_dim == "out"
 
         self.vector_quant_dim = vector_quant_dim
-        # padding for vector quantization
         if self.vector_quant_dim == "in":
             assert True, "Not implemented"
         else:
@@ -130,7 +105,8 @@ class VQuantLinear(nn.Module):
             self.ouliter_num_indices = (self.out_features + self.outlier_padding) // self.outlier_vector_len
 
             assert self.vector_quant_dim == "out", "Currently outlier only support vector quant on out_features"
-            assert self.outlier_num_res_centroids == -1, "Currently do not support residual quant on outliers"
+            assert self.outlier_num_res_centroids == - \
+                1, "Currently do not support residual quant on outliers"
             self.outlier_centroids = nn.Embedding(
                 1, self.outlier_num_centroids * self.outlier_vector_len, **factory_kwargs
             )
@@ -180,7 +156,6 @@ class VQuantLinear(nn.Module):
                 )
 
         # indices shape
-        # self.num_indices in each codebook
         if self.vector_quant_dim == "in":
             assert True, "Not implemented"
         else:
@@ -193,10 +168,6 @@ class VQuantLinear(nn.Module):
                     self.res_index_bits = 0
                 self.total_index_bits = self.index_bits + self.res_index_bits
 
-                # packed_groupsize = math.ceil(self.group_size *
-                #                              (1 + (self.enable_residual is True))
-                #                              * self.index_bits / 32
-                #                              ) if self.is_indice_packed else self.group_size
                 packed_groupsize = math.ceil(self.group_size * self.total_index_bits / 32)
 
                 index_dtype = torch.int32 if self.is_indice_packed else torch.int16
@@ -268,20 +239,18 @@ class VQuantLinear(nn.Module):
             outlier_centroids = centroids[0].clone().detach().requires_grad_(True)
             outlier_centroids = outlier_centroids.reshape(1, self.outlier_num_centroids * self.outlier_vector_len)
             self.outlier_centroids.weight.data = outlier_centroids
-            # if dtype is not None:
-            #     self.outlier_centroids = self.outlier_centroids.to(dtype)
 
             outlier_indices = indices[0]
 
             if self.indices_as_float:
                 outlier_indices = (
-                    outlier_indices.clone().detach().to(torch.uint16).view(torch.float16
-                                                                          ).to(self.outlier_centroids.weight.device)
+                    outlier_indices.clone().detach().to(torch.uint16).view(
+                        torch.float16).to(self.outlier_centroids.weight.device)
                 )
             else:
                 outlier_indices = (
-                    outlier_indices.clone().detach().to(torch.uint16).view(torch.int16
-                                                                          ).to(self.outlier_centroids.weight.device)
+                    outlier_indices.clone().detach().to(torch.uint16).view(
+                        torch.int16).to(self.outlier_centroids.weight.device)
                 )
 
             if len(outlier_indices.shape) == 2:
@@ -640,7 +609,9 @@ class VQuantLinear(nn.Module):
                 if self.vector_quant_dim == "in":
                     assert True, "Not implemented"
                 else:
-                    qweight_outlier = qweight_outlier[:-self.outlier_padding,]
+                    qweight_outlier = qweight_outlier[
+                        :-self.outlier_padding,
+                    ]
             # print('qweight: ', qweight.shape)
             # print('qweight_outlier: ', qweight_outlier.shape)
             qweight = torch.cat([qweight_outlier, qweight], dim=1)
@@ -667,8 +638,7 @@ class VQuantLinear(nn.Module):
         else:
             if x.numel() // x.shape[-1] < 3 and (output := self.fast_gemv(x)) is not None:
                 return output
-            # debug
-            # qweight = None
+
             qweight = self.fast_dequant()
             if qweight is None:
                 qweight = self.dequant()
@@ -678,11 +648,6 @@ class VQuantLinear(nn.Module):
         qweight = self.dequant()
         diff_weight = qweight - W
         proxy_error = diff_weight.T @ diff_weight * H
-        # proxy_error = diff_weight.T @ diff_weight * H
-        # proxy_error = diff_weight.T @ diff_weight * torch.diag(H)
-        # proxy_error = diff_weight.T @ diff_weight * torch.eye(diff_weight.shape[1]).to(W.device)
-        # loss = torch.mean(diff_weight.T @ diff_weight * H) +\
-        #  torch.mean(diff_weight.T.detach() @ diff_weight.detach() * H)
         return proxy_error
 
     def _batched_indices(self, vectors, centroids, batch_size=16384):

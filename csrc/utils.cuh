@@ -24,7 +24,6 @@ typedef __nv_bfloat16 __bfloat16;
 #endif
 
 namespace cuda {
-
 constexpr int kBlockSize = 256;
 
 template <typename T>
