@@ -30,11 +30,13 @@ def build_cuda_extensions():
     else:
         delimiter = ' ' if ';' not in TORCH_CUDA_ARCH_LIST else ' '
         TORCH_CUDA_ARCH_LIST = TORCH_CUDA_ARCH_LIST.split(delimiter)
-        compute_capabilities = [int(10 * float(arch)) for arch in TORCH_CUDA_ARCH_LIST if '+' not in arch]
+        compute_capabilities = [int(10 * float(arch))
+                                for arch in TORCH_CUDA_ARCH_LIST if '+' not in arch]
 
     if torch.cuda.is_available() and torch.version.hip is not None:
         PYTORCH_ROCM_ARCH = os.getenv("PYTORCH_ROCM_ARCH", None)
-        arch_name = torch.cuda.get_device_properties().gcnArchName.split(":")[0]
+        arch_name = torch.cuda.get_device_properties().gcnArchName.split(":")[
+            0]
         if PYTORCH_ROCM_ARCH is not None and arch_name not in PYTORCH_ROCM_ARCH:
             PYTORCH_ROCM_ARCH = PYTORCH_ROCM_ARCH + f";{arch_name}"
         elif PYTORCH_ROCM_ARCH is None:
