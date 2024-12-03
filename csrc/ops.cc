@@ -184,6 +184,8 @@ torch::Tensor fast_gemv(const torch::Tensor& input,
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  m.doc() = "VPTQ";
+
   m.def("dequant", &dequant,
         "dequantize qweight to fp16, \nfunction type: const torch::Tensor& "
         "qweight, const torch::Tensor& scales, const torch::Tensor& qzeros, "
