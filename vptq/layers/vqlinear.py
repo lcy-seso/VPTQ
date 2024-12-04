@@ -11,6 +11,8 @@ import torch.nn as nn
 from torch.nn import functional as F
 from torch.nn.parameter import Parameter
 
+from vptq.ops import dequant, fast_gemv
+
 
 class VQuantLinear(nn.Module):
 
@@ -114,7 +116,7 @@ class VQuantLinear(nn.Module):
         self.vector_quant_dim = vector_quant_dim
         # padding for vector quantization
         if self.vector_quant_dim == "in":
-            assert True, "Not implemented"
+            raise RuntimeError("Not implemented yet.")
         else:
             self.padding = (-self.out_features) % self.vector_len
             self.group_size = group_size
@@ -135,8 +137,16 @@ class VQuantLinear(nn.Module):
                 self.out_features + self.outlier_padding
             ) // self.outlier_vector_len
 
-            assert self.vector_quant_dim == "out", "Currently outlier only support vector quant on out_features"
-            assert self.outlier_num_res_centroids == -1, "Currently do not support residual quant on outliers"
+            if self.vector_quant_dim != "out":
+                raise ValueError((
+                    "Currently outlier is only supported for "
+                    "vector quant on out_features."
+                ))
+            if self.outlier_num_res_centroids != -1:
+                raise ValueError((
+                    "Current implementation does not support "
+                    "residual quant on outliers."
+                ))
             self.outlier_centroids = nn.Embedding(
                 1, self.outlier_num_centroids * self.outlier_vector_len,
                 **factory_kwargs
@@ -145,22 +155,15 @@ class VQuantLinear(nn.Module):
             # all index and perm are uint16 to avoid nccl and safetensor check
             # we view them as float16 or int16
             if self.indices_as_float:
+                shape = (1, self.ouliter_num_indices, self.outlier_size)
                 self.outlier_indices = Parameter(
-                    torch.empty(
-                        (1, self.ouliter_num_indices, self.outlier_size),
-                        dtype=torch.float16,
-                        device=device
-                    ),
-                    requires_grad=False,
+                    torch.empty(shape, dtype=torch.float16, device=device),
+                    requires_grad=False
                 )
             else:
                 self.outlier_indices = Parameter(
-                    torch.empty(
-                        (1, self.ouliter_num_indices, self.outlier_size),
-                        dtype=torch.int16,
-                        device=device
-                    ),
-                    requires_grad=False,
+                    torch.empty(shape, dtype=torch.int16, device=device),
+                    requires_grad=False
                 )
 
         else:
@@ -181,7 +184,7 @@ class VQuantLinear(nn.Module):
         self.enable_norm = enable_norm
         if self.enable_norm:
             if self.vector_quant_dim == "in":
-                assert True, "Not implemented"
+                raise RuntimeError("Not implemented yet.")
             else:
                 self.weight_scale = Parameter(
                     torch.empty(self.in_features, **factory_kwargs),
@@ -196,9 +199,11 @@ class VQuantLinear(nn.Module):
         self.enable_perm = enable_perm
         if self.enable_perm:
             if self.vector_quant_dim == "in":
-                assert True, "Not implemented"
+                raise RuntimeError("Not implemented yet.")
             else:
-                perm_dtype = torch.int16 if self.is_indice_packed else torch.int64
+                perm_dtype = (
+                    torch.int16 if self.is_indice_packed else torch.int64
+                )
                 self.perm = Parameter(
                     torch.arange(
                         self.in_features, device=device, dtype=perm_dtype
@@ -209,57 +214,43 @@ class VQuantLinear(nn.Module):
         # indices shape
         # self.num_indices in each codebook
         if self.vector_quant_dim == "in":
-            assert True, "Not implemented"
+            raise RuntimeError("Not implemented yet.")
+
+        # packed indices
+        if self.is_indice_packed is True:
+            self.index_bits = int(math.log2(self.num_centroids))
+            if self.enable_residual:
+                self.res_index_bits = int(math.log2(self.num_res_centroids))
+            else:
+                self.res_index_bits = 0
+            self.total_index_bits = self.index_bits + self.res_index_bits
+
+            packed_groupsize = math.ceil(
+                self.group_size * self.total_index_bits / 32
+            )
+
+            index_dtype = (
+                torch.int32 if self.is_indice_packed else torch.int16
+            )
+
+            shape = (self.num_codebooks, self.num_indices, packed_groupsize)
+            self.indices = Parameter(
+                torch.empty(shape, dtype=index_dtype, device=device),
+                requires_grad=False
+            )
         else:
-            # packed indices
-            if self.is_indice_packed is True:
-                self.index_bits = int(math.log2(self.num_centroids))
-                if self.enable_residual:
-                    self.res_index_bits = int(math.log2(self.num_res_centroids))
-                else:
-                    self.res_index_bits = 0
-                self.total_index_bits = self.index_bits + self.res_index_bits
-
-                # packed_groupsize = math.ceil(self.group_size *
-                #                              (1 + (self.enable_residual is True))
-                #                              * self.index_bits / 32
-                #                              ) if self.is_indice_packed else self.group_size
-                packed_groupsize = math.ceil(
-                    self.group_size * self.total_index_bits / 32
-                )
-
-                index_dtype = torch.int32 if self.is_indice_packed else torch.int16
-
+            shape = (self.num_codebooks, self.num_indices, self.group_size)
+            # unpacked indices
+            if self.indices_as_float:
                 self.indices = Parameter(
-                    torch.empty((
-                        self.num_codebooks, self.num_indices, packed_groupsize
-                    ),
-                                dtype=index_dtype,
-                                device=device),
-                    requires_grad=False,
+                    torch.empty(shape, dtype=torch.float16, device=device),
+                    requires_grad=False
                 )
             else:
-                # unpacked indices
-                if self.indices_as_float:
-                    self.indices = Parameter(
-                        torch.empty((
-                            self.num_codebooks, self.num_indices,
-                            self.group_size
-                        ),
-                                    dtype=torch.float16,
-                                    device=device),
-                        requires_grad=False,
-                    )
-                else:
-                    self.indices = Parameter(
-                        torch.empty((
-                            self.num_codebooks, self.num_indices,
-                            self.group_size
-                        ),
-                                    dtype=torch.int16,
-                                    device=device),
-                        requires_grad=False,
-                    )
+                self.indices = Parameter(
+                    torch.empty(shape, dtype=torch.int16, device=device),
+                    requires_grad=False
+                )
 
         # set residual centroids and indices
         if self.enable_residual:
@@ -268,25 +259,16 @@ class VQuantLinear(nn.Module):
                 **factory_kwargs
             )
 
-            if self.is_indice_packed is False:
+            if not self.is_indice_packed:
+                shape = (self.num_codebooks, self.num_indices, self.group_size)
                 if self.indices_as_float:
                     self.res_indices = Parameter(
-                        torch.empty((
-                            self.num_codebooks, self.num_indices,
-                            self.group_size
-                        ),
-                                    dtype=torch.float16,
-                                    device=device),
+                        torch.empty(shape, dtype=torch.float16, device=device),
                         requires_grad=False,
                     )
                 else:
                     self.res_indices = Parameter(
-                        torch.empty((
-                            self.num_codebooks, self.num_indices,
-                            self.group_size
-                        ),
-                                    dtype=torch.int16,
-                                    device=device),
+                        torch.empty(shape, dtype=torch.int16, device=device),
                         requires_grad=False,
                     )
         else:
@@ -395,9 +377,6 @@ class VQuantLinear(nn.Module):
             )
             self.res_centroids.weight.data = _res_centroids
 
-            # if dtype is not None:
-            #     self.res_centroids = self.res_centroids.to(dtype)
-
             # main indices
             _res_indices = []
             keys = sorted(res_indices.keys())
@@ -451,25 +430,14 @@ class VQuantLinear(nn.Module):
                 torch.argsort(self.perm.view(torch.uint16).to(torch.int64)
                              ).to(torch.uint16).view(torch.int16)
             )
-        #     if self.indices.dtype != torch.int:
-        #         self.short_indices = self.indices.view(
-        #             torch.int16) if self.indices_as_fp16 else self.indices.short()
-        #         self.short_res_indices = None
-        #         if self.res_indices is not None:
-        #             self.short_res_indices = self.res_indices.view(
-        #                 torch.int16) if self.indices_as_fp16 else self.res_indices.short()
-        #         self.short_outlier_indices = None
-        #         if hasattr(self, "outlier_indices"):
-        #             self.short_outlier_indices = self.outlier_indices.view(
-        #                 torch.int16) if self.indices_as_fp16 else self.outlier_indices.short()
-        #     self.short_perm = self.perm.short()
 
     # TODO: FIX
     def fast_gemv(self, x):
         try:
-            from vptq import ops
+            from vptq import cuda_ops
         except ImportError:
             return None
+
         self.post_init()
         centroids = self.centroids.weight.view(
             self.num_codebooks, self.num_centroids, self.vector_len
@@ -496,7 +464,7 @@ class VQuantLinear(nn.Module):
             indices = self.short_indices
             res_indices = self.short_res_indices
             outlier_indices = self.short_outlier_indices
-        out = ops.gemm(
+        out = cuda_ops.gemm(
             x,
             indices,
             centroids,
@@ -558,7 +526,7 @@ class VQuantLinear(nn.Module):
 
     def fast_dequant(self):
         try:
-            from vptq import ops
+            from vptq import cuda_ops
         except ImportError:
             return None
         self.post_init()
@@ -590,7 +558,7 @@ class VQuantLinear(nn.Module):
             res_indices = self.short_res_indices
             outlier_indices = self.short_outlier_indices
 
-        output = ops.dequant(
+        output = cuda_ops.dequant(
             indices,
             centroids,
             res_indices,
