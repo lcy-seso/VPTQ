@@ -72,7 +72,8 @@ def attach_execution_device_hook(
         )
 
     # Break the recursion if we get to a preload module.
-    if preload_module_classes is not None and module.__class__.__name__ in preload_module_classes:
+    if (preload_module_classes
+        is not None) and (module.__class__.__name__ in preload_module_classes):
         return
 
     for child in module.children():
@@ -97,6 +98,7 @@ class AutoModelForCausalLM(transformers.AutoModelForCausalLM):
         auto_conf = transformers.AutoConfig.from_pretrained(
             pretrained_model_name_or_path, **kwargs
         )
+
         cls_kwargs = {}
         torch_dtype = kwargs.get("dtype", auto_conf.torch_dtype)
         cls_kwargs["torch_dtype"] = torch_dtype

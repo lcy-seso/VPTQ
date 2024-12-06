@@ -177,6 +177,7 @@ torch::Tensor fast_gemv(const torch::Tensor& input,
                         const torch::Tensor& weight_bias,
                         const c10::optional<torch::Tensor>& bias, int groupsize,
                         int in_features, int out_features) {
+  // not implemented yet.
   torch::Tensor output = torch::empty_like(input);  // placeholder
 
   gpuErrchk(cudaPeekAtLastError());
@@ -186,18 +187,8 @@ torch::Tensor fast_gemv(const torch::Tensor& input,
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.doc() = "VPTQ";
 
-  m.def("dequant", &dequant,
-        "dequantize qweight to fp16, \nfunction type: const torch::Tensor& "
-        "qweight, const torch::Tensor& scales, const torch::Tensor& qzeros, "
-        "tensor g_idx, int groupsize, int bits, int in_features");
-  m.def("gemm", &wqA16Gemm,
-        "compute the gemm output, usually gemv, \nfunction type: const "
-        "torch::Tensor& qweight, const torch::Tensor& scales, const "
-        "torch::Tensor& qzeros, tensor g_idx, int groupsize, int bits, int "
-        "in_features");
+  m.def("dequant", &dequant, R"DOC(Dequantize qweight to fp16.)DOC");
+  m.def("gemm", &wqA16Gemm, R"DOC(Compute the gemm output, usually gemv.)DOC");
   m.def("fast_gemv", &fast_gemv,
-        "compute the gemm output, usually gemv, \nfunction type: const "
-        "torch::Tensor& qweight, const torch::Tensor& scales, const "
-        "torch::Tensor& qzeros, tensor g_idx, int groupsize, int bits, int "
-        "in_features");
+        R"DOC(Compute the gemm output, usually gemv.)DOC");
 }
