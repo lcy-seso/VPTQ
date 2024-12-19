@@ -39,6 +39,11 @@ class VQuantLinear(nn.Module):
     ):
         super().__init__()
 
+        # self.num_indices in each codebook
+        if vector_quant_dim == "in":
+            raise RuntimeError("Not implemented yet.")
+        self.vector_quant_dim = vector_quant_dim
+
         # get init args
         self.init_args = {
             "in_features": in_features,
@@ -60,7 +65,9 @@ class VQuantLinear(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         if bias:
-            self.bias = Parameter(torch.empty(self.out_features, **factory_kwargs))
+            self.bias = Parameter(
+                torch.empty(self.out_features, **factory_kwargs)
+            )
         else:
             self.register_parameter("bias", None)
 
@@ -106,114 +113,125 @@ class VQuantLinear(nn.Module):
             self.outlier_vector_len = vector_lens[0]
             self.outlier_num_centroids = num_centroids[0]
             self.outlier_num_res_centroids = num_res_centroids[0]
-            self.outlier_padding = (-self.out_features) % self.outlier_vector_len
-            self.ouliter_num_indices = (self.out_features + self.outlier_padding) // self.outlier_vector_len
+            self.outlier_padding = (
+                -self.out_features
+            ) % self.outlier_vector_len
+            self.ouliter_num_indices = (
+                self.out_features + self.outlier_padding
+            ) // self.outlier_vector_len
 
-            assert self.vector_quant_dim == "out", "Currently outlier only support vector quant on out_features"
-            assert self.outlier_num_res_centroids == -1, "Currently do not support residual quant on outliers"
+            if self.vector_quant_dim != "out":
+                raise ValueError((
+                    "Currently outlier is only supported for "
+                    "vector quantization on out_features."
+                ))
+            if self.outlier_num_res_centroids != -1:
+                raise ValueError((
+                    "Current implementation does not support residual "
+                    "quantization on outliers yet."
+                ))
             self.outlier_centroids = nn.Embedding(
-                1, self.outlier_num_centroids * self.outlier_vector_len, **factory_kwargs
+                1, self.outlier_num_centroids * self.outlier_vector_len,
+                **factory_kwargs
             )
 
             # all index and perm are uint16 to avoid nccl and safetensor check
             # we view them as float16 or int16
+            shape = (1, self.ouliter_num_indices, self.outlier_size)
             if self.indices_as_float:
                 self.outlier_indices = Parameter(
-                    torch.empty((1, self.ouliter_num_indices, self.outlier_size), dtype=torch.float16, device=device),
-                    requires_grad=False,
+                    torch.empty(shape, dtype=torch.float16, device=device),
+                    requires_grad=False
                 )
             else:
                 self.outlier_indices = Parameter(
-                    torch.empty((1, self.ouliter_num_indices, self.outlier_size), dtype=torch.int16, device=device),
-                    requires_grad=False,
+                    torch.empty(shape, dtype=torch.int16, device=device),
+                    requires_grad=False
                 )
-    
+
         self.enable_residual = bool(self.num_res_centroids > 0)
 
-
         # set main centroids
-        self.centroids = nn.Embedding(self.num_codebooks, self.num_centroids * self.vector_len, **factory_kwargs)
+        self.centroids = nn.Embedding(
+            self.num_codebooks, self.num_centroids * self.vector_len,
+            **factory_kwargs
+        )
 
         # process norm
         self.enable_norm = enable_norm
         if self.enable_norm:
             if self.vector_quant_dim == "in":
-                assert True, "Not implemented"
+                raise RuntimeError("Not implemented yet.")
             else:
-                self.weight_scale = Parameter(torch.empty(self.in_features, **factory_kwargs), requires_grad=True)
-                self.weight_bias = Parameter(torch.empty(self.in_features, **factory_kwargs), requires_grad=True)
+                self.weight_scale = Parameter(
+                    torch.empty(self.in_features, **factory_kwargs),
+                    requires_grad=True
+                )
+                self.weight_bias = Parameter(
+                    torch.empty(self.in_features, **factory_kwargs),
+                    requires_grad=True
+                )
 
         # process permutation
         self.enable_perm = enable_perm
         if self.enable_perm:
-            if self.vector_quant_dim == "in":
-                assert True, "Not implemented"
-            else:
-                perm_dtype = torch.int16 if self.is_indice_packed else torch.int64
-                self.perm = Parameter(
-                    torch.arange(self.in_features, device=device, dtype=perm_dtype), requires_grad=False
-                )
+            perm_dtype = torch.int16 if self.is_indice_packed else torch.int64
+            self.perm = Parameter(
+                torch.arange(self.in_features, device=device, dtype=perm_dtype),
+                requires_grad=False
+            )
 
-        # indices shape
-        # self.num_indices in each codebook
-        if self.vector_quant_dim == "in":
-            assert True, "Not implemented"
+        # packed indices
+        if self.is_indice_packed is True:
+            self.index_bits = int(math.log2(self.num_centroids))
+            if self.enable_residual:
+                self.res_index_bits = int(math.log2(self.num_res_centroids))
+            else:
+                self.res_index_bits = 0
+            self.total_index_bits = self.index_bits + self.res_index_bits
+
+            packed_groupsize = math.ceil(
+                self.group_size * self.total_index_bits / 32
+            )
+
+            index_dtype = (
+                torch.int32 if self.is_indice_packed else torch.int16
+            )
+
+            shape = self.num_codebooks, self.num_indices, packed_groupsize
+            self.indices = Parameter(
+                torch.empty(shape, dtype=index_dtype, device=device),
+                requires_grad=False,
+            )
         else:
-            # packed indices
-            if self.is_indice_packed is True:
-                self.index_bits = int(math.log2(self.num_centroids))
-                if self.enable_residual:
-                    self.res_index_bits = int(math.log2(self.num_res_centroids))
-                else:
-                    self.res_index_bits = 0
-                self.total_index_bits = self.index_bits + self.res_index_bits
+            # unpacked indices
+            shape = (self.num_codebooks, self.num_indices, self.group_size)
+            to_type = torch.float16
+            if self.indices_as_float:
+                to_type = torch.int16
 
-                packed_groupsize = math.ceil(self.group_size * self.total_index_bits / 32)
-
-                index_dtype = torch.int32 if self.is_indice_packed else torch.int16
-
-                self.indices = Parameter(
-                    torch.empty((self.num_codebooks, self.num_indices, packed_groupsize),
-                                dtype=index_dtype,
-                                device=device),
-                    requires_grad=False,
-                )
-            else:
-                # unpacked indices
-                if self.indices_as_float:
-                    self.indices = Parameter(
-                        torch.empty((self.num_codebooks, self.num_indices, self.group_size),
-                                    dtype=torch.float16,
-                                    device=device),
-                        requires_grad=False,
-                    )
-                else:
-                    self.indices = Parameter(
-                        torch.empty((self.num_codebooks, self.num_indices, self.group_size),
-                                    dtype=torch.int16,
-                                    device=device),
-                        requires_grad=False,
-                    )
+            self.indices = Parameter(
+                torch.empty(shape, dtype=to_type, device=device),
+                requires_grad=False
+            )
 
         # set residual centroids and indices
         if self.enable_residual:
             self.res_centroids = nn.Embedding(
-                self.num_codebooks, self.num_res_centroids * self.vector_len, **factory_kwargs
+                self.num_codebooks, self.num_res_centroids * self.vector_len,
+                **factory_kwargs
             )
 
             if self.is_indice_packed is False:
+                shape = (self.num_codebooks, self.num_indices, self.group_size)
                 if self.indices_as_float:
                     self.res_indices = Parameter(
-                        torch.empty((self.num_codebooks, self.num_indices, self.group_size),
-                                    dtype=torch.float16,
-                                    device=device),
+                        torch.empty(shape, dtype=torch.float16, device=device),
                         requires_grad=False,
                     )
                 else:
                     self.res_indices = Parameter(
-                        torch.empty((self.num_codebooks, self.num_indices, self.group_size),
-                                    dtype=torch.int16,
-                                    device=device),
+                        torch.empty(shape, dtype=torch.int16, device=device),
                         requires_grad=False,
                     )
         else:
@@ -236,21 +254,23 @@ class VQuantLinear(nn.Module):
     ):
         # step 1, handle outliers
         if self.enable_outlier:
-            outlier_centroids = centroids[0].clone().detach().requires_grad_(True)
-            outlier_centroids = outlier_centroids.reshape(1, self.outlier_num_centroids * self.outlier_vector_len)
+            outlier_centroids = centroids[0].clone().detach(
+            ).requires_grad_(True)
+            outlier_centroids = outlier_centroids.reshape(
+                1, self.outlier_num_centroids * self.outlier_vector_len
+            )
             self.outlier_centroids.weight.data = outlier_centroids
 
             outlier_indices = indices[0]
+            device = self.outlier_centroids.weight.device
             if self.indices_as_float:
-                outlier_indices = (
-                    outlier_indices.clone().detach().to(torch.uint16).view(torch.float16
-                                                                          ).to(self.outlier_centroids.weight.device)
-                )
+                outlier_indices = outlier_indices.clone().detach().to(
+                    torch.uint16
+                ).view(torch.float16).to(device)
             else:
-                outlier_indices = (
-                    outlier_indices.clone().detach().to(torch.uint16).view(torch.int16
-                                                                          ).to(self.outlier_centroids.weight.device)
-                )
+                outlier_indices = outlier_indices.clone().detach().to(
+                    torch.uint16
+                ).view(torch.int16).to(device)
 
             if len(outlier_indices.shape) == 2:
                 outlier_indices = outlier_indices.unsqueeze(0)
@@ -261,10 +281,12 @@ class VQuantLinear(nn.Module):
         keys = sorted(centroids.keys())
         for cidx in keys[1:]:  # main centroids start from 1
             _centroids.append(centroids[cidx])
+
         # (num_codebooks, num_centroids, vector_len)
         _centroids = torch.stack(_centroids, dim=0)
-
-        _centroids = _centroids.reshape(self.num_codebooks, self.num_centroids * self.vector_len)
+        _centroids = _centroids.reshape(
+            self.num_codebooks, self.num_centroids * self.vector_len
+        )
         self.centroids.weight.data = _centroids
 
         _indices = []
@@ -273,12 +295,13 @@ class VQuantLinear(nn.Module):
             _indices.append(indices[cidx])
         _indices = torch.stack(_indices, dim=0)
 
-        _indices = _indices.reshape(self.num_codebooks, self.num_indices, self.group_size)
+        _indices = _indices.reshape(
+            self.num_codebooks, self.num_indices, self.group_size
+        )
 
-        if self.indices_as_float:
-            self.indices.data = _indices.to(torch.uint16).view(torch.float16).to(self.centroids.weight.device)
-        else:
-            self.indices.data = _indices.to(torch.uint16).view(torch.int16).to(self.centroids.weight.device)
+        to_type = torch.float16 if self.indices_as_float else torch.uint16
+        device = self.centroids.weight.device
+        self.indices.data = _indices.to(torch.uint16).view(to_type).to(device)
 
         # step 3: handle residual
         if self.enable_residual:
@@ -288,9 +311,10 @@ class VQuantLinear(nn.Module):
                 _res_centroids.append(res_centroids[cidx])
             _res_centroids = torch.stack(_res_centroids, dim=0)
 
-            _res_centroids = _res_centroids.reshape(self.num_codebooks, self.num_res_centroids * self.vector_len)
+            _res_centroids = _res_centroids.reshape(
+                self.num_codebooks, self.num_res_centroids * self.vector_len
+            )
             self.res_centroids.weight.data = _res_centroids
-
 
             # main indices
             _res_indices = []
@@ -299,19 +323,19 @@ class VQuantLinear(nn.Module):
                 _res_indices.append(res_indices[cidx])
             _res_indices = torch.stack(_res_indices, dim=0)
 
-            _res_indices = _res_indices.reshape(self.num_codebooks, self.num_indices, self.group_size)
+            _res_indices = _res_indices.reshape(
+                self.num_codebooks, self.num_indices, self.group_size
+            )
 
-            if self.indices_as_float:
-                self.res_indices.data = (
-                    _res_indices.to(torch.uint16).view(torch.float16).to(self.res_centroids.weight.device)
-                )
-            else:
-                self.res_indices.data = (
-                    _res_indices.to(torch.uint16).view(torch.int16).to(self.res_centroids.weight.device)
-                )
+            device = self.res_centroids.weight.device
+            to_type = torch.float16 if self.indices_as_float else torch.uint16
+            self.res_indices.data = _res_indices.to(torch.uint16
+                                                   ).view(to_type).to(device)
 
         if self.enable_norm:
-            self.weight_scale.data = weight_scale.to(self.centroids.weight.device)
+            self.weight_scale.data = weight_scale.to(
+                self.centroids.weight.device
+            )
             self.weight_bias.data = weight_bias.to(self.centroids.weight.device)
 
         if self.enable_perm:
@@ -329,9 +353,12 @@ class VQuantLinear(nn.Module):
         if self.enable_proxy_error:
             return self.proxy_error_forward(W, H)
         else:
-            outlier_centroids = self.outlier_centroids.weight if self.enable_outlier else None
-
-            res_centroids = self.res_centroids.weight if self.res_centroids else None
+            outlier_centroids = None
+            if self.enable_outlier:
+                outlier_centroids = self.outlier_centroids.weight
+            res_centroids = None
+            if self.res_centroids is not None:
+                res_centroids = self.res_centroids.weight
 
             output = ops.dequant_gemm(
                 x,
@@ -352,7 +379,7 @@ class VQuantLinear(nn.Module):
                 self.outlier_num_centroids,
                 self.outlier_vector_len,
                 self.in_features,
-                self.out_features
+                self.out_features,
             )
             return output
 
@@ -386,22 +413,24 @@ class VQuantLinear(nn.Module):
 
     # set indices by l2 distance
     def set_l2_indices(self, weights):
-        if self.vector_quant_dim == "in":
-            raise AssertionError("self.vector_quant_dim == in")
-        else:
-            weights = F.pad(weights, (0, 0, 0, self.padding))
-            weights = weights.T
+        weights = F.pad(weights, (0, 0, 0, self.padding))
+        weights = weights.T
 
         # (in, out) -> (in * out / vector, vector)
         vectors = weights.reshape(-1, self.vector_len).to("cuda")
-        centroids = self.centroids.weight.view(self.num_codebooks, self.num_centroids, self.vector_len)
+        centroids = self.centroids.weight.view(
+            self.num_codebooks, self.num_centroids, self.vector_len
+        )
 
         indices = self._batched_indices(vectors, centroids)
 
         if self.enable_residual:
             res_vectors = vectors - centroids.squeeze(0)[indices.squeeze(0)]
             res_indices = self._batched_indices(
-                res_vectors, self.res_centroids.weight.view(self.num_codebooks, self.num_centroids, self.vector_len)
+                res_vectors,
+                self.res_centroids.weight.view(
+                    self.num_codebooks, self.num_centroids, self.vector_len
+                )
             )
         # reshape indices and res_indices
         indices = indices.reshape(self.in_features, -1)
