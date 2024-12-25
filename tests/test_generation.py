@@ -53,7 +53,6 @@ class TestGeneration(unittest.TestCase):
             pad_token_id=self.pad_token_id
         )
         output_string = self.tokenizer.decode(out[0], skip_special_tokens=True)
-
         self.assertEqual(output_string, self.EXPECTED_OUTPUT)
 
 
