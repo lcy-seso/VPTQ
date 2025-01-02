@@ -8,6 +8,8 @@
 #include <torch/extension.h>
 #include <torch/library.h>
 
+#include "quantized_gemm.cuh"
+
 #define CHECK_CUDA(x) \
   TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
 #define CHECK_CONTIGUOUS(x) \
@@ -158,10 +160,18 @@ torch::Tensor quant_gemm(const torch::Tensor& activations,
                          const torch::Tensor& indices,
                          const torch::Tensor& centroids,
                          const c10::optional<torch::Tensor>& residual_centroids,
-                         const c10::optional<torch::Tensor>& scale_weights,
-                         const c10::optional<torch::Tensor>& scale_bias,
-                         int64_t in_features, int64_t out_features) {
+                         const torch::Tensor& scale_weights,
+                         const torch::Tensor& scale_bias, int64_t in_features,
+                         int64_t out_features) {
+  CHECK_INPUT(indices);
+  CHECK_INPUT(centroids);
+  CHECK_INPUT(scale_weights);
+  CHECK_INPUT(scale_bias);
+
   torch::Tensor output;
+  output = at::empty({in_features, out_features}, centroids.options());
+
+  auto stream = at::cuda::getCurrentCUDAStream().stream();
 
   return output;
 }
@@ -205,8 +215,8 @@ TORCH_LIBRARY(vptq, m) {
         Tensor indices,
         Tensor centroids,
         Tensor? residual_centroids,
-        Tensor? scale_weights,
-        Tensor? scale_bias,
+        Tensor scale_weights,
+        Tensor scale_bias,
         int in_features,
         int out_features) -> Tensor
   )DOC");

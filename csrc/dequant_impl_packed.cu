@@ -49,7 +49,7 @@ __global__ void WqA16WithOutliers_PackIndice(
   const scalar_t zero_value = ZERO_VALUE(scalar_t());
 
 #pragma unroll
-  for (int i = 0; i < GROUPSIZE; i++) {
+  for (int i = 0; i < GROUPSIZE; ++i) {
     tmp_output[i] = zero_value;
   }
   input_data = input_data + in_features * bidy;
@@ -77,7 +77,7 @@ __global__ void WqA16WithOutliers_PackIndice(
       constexpr int n_outlisers_groups_in_normalgroup =
           GROUPSIZE / OL_GroupSize;
 #pragma unroll
-      for (int i = 0; i < n_outlisers_groups_in_normalgroup; i++) {
+      for (int i = 0; i < n_outlisers_groups_in_normalgroup; ++i) {
         if (in_y * n_outlisers_groups_in_normalgroup + i >=
             out_features / OL_GroupSize)
           continue;
@@ -141,7 +141,7 @@ __global__ void WqA16WithOutliers_PackIndice(
         VecType hres[GROUPSIZE / 2];
         hres_ptr = hres;
 #pragma unroll
-        for (int i = 0; i < GROUPSIZE / 2; i++) {
+        for (int i = 0; i < GROUPSIZE / 2; ++i) {
           hres[i] = ADD2(*(((VecType*)base) + i), *(((VecType*)residual) + i));
         }
       } else {
@@ -150,7 +150,7 @@ __global__ void WqA16WithOutliers_PackIndice(
 
       VecType* h2_tmp_output = (VecType*)tmp_output;
 #pragma unroll
-      for (int gi = 0; gi < GROUPSIZE / 2; gi++) {
+      for (int gi = 0; gi < GROUPSIZE / 2; ++gi) {
         h2_tmp_output[gi] = FMA2(hres_ptr[gi], input_v2, h2_tmp_output[gi]);
         h2_tmp_output[gi] = ADD2(h2_tmp_output[gi], bias2);
       }
@@ -160,7 +160,7 @@ __global__ void WqA16WithOutliers_PackIndice(
   int warpid = threadIdx.x / WARP_SIZE;  // at most 8 warp = 256 / WARP_SIZE
   int landid = threadIdx.x % WARP_SIZE;
 #pragma unroll
-  for (int gi = 0; gi < GROUPSIZE; gi++) {
+  for (int gi = 0; gi < GROUPSIZE; ++gi) {
     float reduce_out = 0.f;
     reduce_out = cuda::ConvertToFloat(tmp_output[gi]);
     reduce_out = cuda::warpReduceSum<WARP_SIZE>(reduce_out);
@@ -225,7 +225,7 @@ __global__ void DequantizeWithOutliers_PackIndice(
         in_y * n_outlisers_groups_in_normalgroup * outliers_infeatures +
         mapped_index_x;
 #pragma unroll(3)
-    for (int i = 0; i < n_outlisers_groups_in_normalgroup; i++) {
+    for (int i = 0; i < n_outlisers_groups_in_normalgroup; ++i) {
       if (in_y * n_outlisers_groups_in_normalgroup + i >=
           out_features / OL_GroupSize)
         return;
@@ -234,7 +234,7 @@ __global__ void DequantizeWithOutliers_PackIndice(
           outliers_centroids + outliers_ind * OL_GroupSize;
       const int gi = in_y * GROUPSIZE + i * OL_GroupSize;
 #pragma unroll(4)
-      for (int j = 0; j < OL_GroupSize; j++) {
+      for (int j = 0; j < OL_GroupSize; ++j) {
         if ((gi + j) >= out_features) {
           return;
         }
@@ -276,7 +276,7 @@ __global__ void DequantizeWithOutliers_PackIndice(
     cuda::ldg_vec_x<GROUPSIZE>((residual),
                                (const uint32_t*)(residual_centroids_start));
 #pragma unroll
-    for (int i = 0; i < GROUPSIZE / 2; i++) {
+    for (int i = 0; i < GROUPSIZE / 2; ++i) {
       base[i] = ADD2(*(((VecType*)base) + i), *(((VecType*)residual) + i));
     }
   }
@@ -285,7 +285,7 @@ __global__ void DequantizeWithOutliers_PackIndice(
   VecType scale2 = VecType{scale, scale};
   VecType bias2 = VecType{bias, bias};
 #pragma unroll
-  for (int i = 0; i < GROUPSIZE / 2; i++) {
+  for (int i = 0; i < GROUPSIZE / 2; ++i) {
     hres[i] = FMA2(base[i], scale2, bias2);
   }
   scalar_t* res = (scalar_t*)hres;
@@ -296,7 +296,7 @@ __global__ void DequantizeWithOutliers_PackIndice(
     out += (group_step)*in_features + in_x;
   }
 #pragma unroll
-  for (int i = 0; i < GROUPSIZE; i++) {
+  for (int i = 0; i < GROUPSIZE; ++i) {
     if ((group_step + i) < out_features) {
       if constexpr (Return_OUF_x_INF) {
         out[i * in_features] = res[i];
