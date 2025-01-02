@@ -98,19 +98,17 @@ torch::Tensor dequant(const torch::Tensor& q_indice,
   return output;
 }
 
-torch::Tensor wqA16Gemm(const torch::Tensor& input,
-                        const torch::Tensor& q_indice,
-                        const torch::Tensor& centroids,
-                        const c10::optional<torch::Tensor>& q_indice_residual,
-                        const c10::optional<torch::Tensor>& residual_centroids,
-                        const c10::optional<torch::Tensor>& q_indice_outliers,
-                        const c10::optional<torch::Tensor>& outliers_centroids,
-                        const c10::optional<torch::Tensor>& invperm,
-                        const torch::Tensor& weight_scale,
-                        const torch::Tensor& weight_bias,
-                        const c10::optional<torch::Tensor>& bias,
-                        int64_t groupsize, int64_t in_features,
-                        int64_t out_features) {
+torch::Tensor wquant_act16_gemv(
+    const torch::Tensor& input, const torch::Tensor& q_indice,
+    const torch::Tensor& centroids,
+    const c10::optional<torch::Tensor>& q_indice_residual,
+    const c10::optional<torch::Tensor>& residual_centroids,
+    const c10::optional<torch::Tensor>& q_indice_outliers,
+    const c10::optional<torch::Tensor>& outliers_centroids,
+    const c10::optional<torch::Tensor>& invperm,
+    const torch::Tensor& weight_scale, const torch::Tensor& weight_bias,
+    const c10::optional<torch::Tensor>& bias, int64_t in_features,
+    int64_t out_features) {
   CHECK_INPUT(q_indice);
   CHECK_INPUT(input);
   if (q_indice_residual.has_value()) {
@@ -128,8 +126,6 @@ torch::Tensor wqA16Gemm(const torch::Tensor& input,
     CHECK_INPUT(invperm.value());
     inv_perm_device_index = invperm.value().device().index();
   }
-
-  TORCH_CHECK_GE(groupsize, 2) << "groupsize must be >= 2.";
 
   if (q_indice_residual.has_value()) {
     TORCH_CHECK_EQ(centroids.sizes(), residual_centroids.value().sizes())
@@ -154,18 +150,30 @@ torch::Tensor wqA16Gemm(const torch::Tensor& input,
       weight_scale, weight_bias, bias);
 
   gpuErrchk(cudaPeekAtLastError());
+  return output;
+}
+
+torch::Tensor quant_gemm(const torch::Tensor& activations,
+                         const c10::optional<torch::Tensor>& bias,
+                         const torch::Tensor& indices,
+                         const torch::Tensor& centroids,
+                         const c10::optional<torch::Tensor>& residual_centroids,
+                         const c10::optional<torch::Tensor>& scale_weights,
+                         const c10::optional<torch::Tensor>& scale_bias,
+                         int64_t in_features, int64_t out_features) {
+  torch::Tensor output;
 
   return output;
 }
 
 TORCH_LIBRARY_IMPL(vptq, CUDA, m) {
   m.impl("dequant", dequant);
-  m.impl("gemm", wqA16Gemm);
+  m.impl("quant_gemv", wquant_act16_gemv);
+  m.impl("quant_gemm", quant_gemm);
 }
 
 TORCH_LIBRARY(vptq, m) {
-  m.def(
-      R"DOC(dequant(Tensor q_indice,
+  m.def(R"DOC(dequant(Tensor q_indice,
       Tensor centroids,
       Tensor? q_indice_residual,
       Tensor? residual_centroids,
@@ -178,8 +186,7 @@ TORCH_LIBRARY(vptq, m) {
       int in_features,
       int out_features) -> Tensor
 )DOC");
-  m.def(
-      R"DOC(gemm(Tensor input,
+  m.def(R"DOC(quant_gemv(Tensor input,
       Tensor q_indice,
       Tensor centroids,
       Tensor? q_indice_residual,
@@ -190,8 +197,17 @@ TORCH_LIBRARY(vptq, m) {
       Tensor weight_scale,
       Tensor weight_bias,
       Tensor? bias,
-      int groupsize,
       int in_features,
       int out_features) -> Tensor
 )DOC");
+  m.def(R"DOC(quant_gemm(Tensor activations,
+        Tensor? bias,
+        Tensor indices,
+        Tensor centroids,
+        Tensor? residual_centroids,
+        Tensor? scale_weights,
+        Tensor? scale_bias,
+        int in_features,
+        int out_features) -> Tensor
+  )DOC");
 }
