@@ -28,6 +28,12 @@ message(STATUS "Python include dir: ${Python3_INCLUDE_DIRS}")
 
 include_directories(${Python3_INCLUDE_DIRS})
 
+find_package(mkl QUIET)
+if(TARGET mkl)
+  message(STATUS "Found MKL, and MKL_ROOT is set to: ${MKL_ROOT}.")
+   target_link_directories(caffe2::mkl INTERFACE "${MKL_ROOT}/lib")
+endif()
+
 set(TORCH_LIB_PREFIX "${Python3_SITEARCH}/torch")
 if(NOT EXISTS ${TORCH_LIB_PREFIX})
   message(FATAL_ERROR "Torch library is not installed.")
