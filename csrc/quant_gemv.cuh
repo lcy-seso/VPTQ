@@ -183,4 +183,9 @@ __global__ void WqA16WithOutliers_PackIndice(
   }
 }
 
+template <typename DType>
+__global__ void quant_gemv_kernel(DType* output) {
+  return;
+}
+
 }  // namespace vptq
