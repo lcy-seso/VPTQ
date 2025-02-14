@@ -79,8 +79,8 @@ class TestQuantGemv(unittest.TestCase):
             out_features=self.out_features,
         )
 
-        print(self.x)
-        print(out)
+        # print(self.x)
+        # print(out)
         assert torch.allclose(out, self.x, atol=1e-4)
 
 
