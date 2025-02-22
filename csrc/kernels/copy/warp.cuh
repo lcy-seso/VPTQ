@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 #pragma once
 
-#include "kernels/copy/layout.cuh"
+#include "kernels/layout.cuh"
 
 namespace vptq::kernels::copy {
 

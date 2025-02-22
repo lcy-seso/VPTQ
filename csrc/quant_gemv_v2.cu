@@ -134,14 +134,17 @@ torch::Tensor quant_gemv_v2(
                   : nullptr;
 
           static constexpr int kTileSize = 512;
+          using IdType = uint16_t;
           using Config =
-              kernels::QuantGemvKeTraits<nv_type, kThreads, kTileSize, kVecLen,
-                                         kNumCentroids, kNumResCentroids>;
+              kernels::QuantGemvKeTraits<nv_type, IdType, IdType, kThreads,
+                                         kTileSize, kVecLen, kNumCentroids,
+                                         kNumResCentroids>;
           using SharedStorage = Config::SharedStorage;
           int smem_size = SharedStorage::kSmemSize;
 
           auto kernel =
-              &kernels::ke_quant_gemv_v2<nv_type, SharedStorage, Config>;
+              &kernels::ke_quant_gemv_v2<nv_type, IdType, IdType,
+                                         Config::SharedStorage, Config>;
 
           // TODO(ying): Check whether shared memory usage exceeds
           // the hardware limit.
@@ -160,6 +163,8 @@ torch::Tensor quant_gemv_v2(
 
           std::cout << "kThreads: " << Config::InputLoader::kThreads
                     << "; kWarpShape: " << Config::InputLoader::kWarpTileShape
+                    << std::endl
+                    << "kDecodeNumPerThread: " << Config::kDecodeNumPerThread
                     << std::endl;
 
           kernel<<<blocks, threads, smem_size, stream>>>(
