@@ -32,6 +32,9 @@ struct SharedStorageImpl {
   array_aligned<DType, kSizeInputs, 128> inputs;
 
   // TODO(ying): Support residual indices are stored in uint8_t
+  static_assert(std::is_same_v<IdType, ResIdType>,
+                "The data type of indices for main and residual centroids must "
+                "be the same.");
   array_aligned<IdType, kTileSize * 2> indices;
 
   ///==== Shared mempory for intermediate results ====///
@@ -141,14 +144,14 @@ struct QuantGemvKeTraits : public Base {
                 "threads used to load a single index tile must be less than or "
                 "equal to the number of threads in the block.");
 
-  using IndexLoader = copy::GlobalToSharedInputLoader<IdType, kTileSize>;
-  using IndexStorer = copy::SharedToGlobalInputStorer<IdType, kTileSize>;
-
-  // Note: The data type for residual indices can also be uint8_t. When using
-  // uint8_t, ensure the data is aligned to 16 bits in memory. Verify and unit
-  // test the uint8_t case.
-  using ResIndexLoader = copy::GlobalToSharedInputLoader<ResIdType, kTileSize>;
-  using ResIndexStorer = copy::SharedToGlobalInputStorer<ResIdType, kTileSize>;
+  // TODO(ying): The current implementation requires that the indices for both
+  // main and residual centroids are stored in the same data type. This will be
+  // addressed in the next version.
+  static_assert(std::is_same_v<IdType, ResIdType>,
+                "The data type of indices for main and residual centroids must "
+                "be the same.");
+  using IndexLoader = copy::GlobalToSharedInputLoader<IdType, 2 * kTileSize>;
+  using IndexStorer = copy::SharedToGlobalInputStorer<IdType, 2 * kTileSize>;
 
   /// configurations for decoding indices
   // Ensure the indices can be stored aligned with shared memory banks, and a

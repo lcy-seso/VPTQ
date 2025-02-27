@@ -89,15 +89,15 @@ __global__ void ke_quant_gemv_v2(
       // load a single tile of the activation into shared memory
       input_loader(x + step, s_inputs, counter.cur());
     }
-
     ++counter;
-    if (wid >= counter.cur() && wid < counter.next()) {
+
+    if (wid >= counter.cur() && wid < counter.next(2)) {
       // load indices into shared memory
-      index_loader(indices + step, s_ids, counter.cur());
+      index_loader(indices + step * 2, s_ids, counter.cur());
     }
 
     if (scale_weights) {
-      ++counter;
+      counter += 2;
       if (wid >= counter.cur() && wid < counter.next()) {
         // load scale_weights into shared memory if available
         input_loader(scale_weights + step, s_scale_weights, counter.cur());

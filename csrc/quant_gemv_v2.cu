@@ -161,8 +161,8 @@ torch::Tensor quant_gemv_v2(
                     << "; out_features: " << out_features << ";" << std::endl
                     << "smem_size: " << smem_size / 1024 << "KB;" << std::endl;
 
-          std::cout << "kThreads: " << Config::InputLoader::kThreads
-                    << "; kWarpShape: " << Config::InputLoader::kWarpTileShape
+          std::cout << "kThreads: " << Config::IndexLoader::kThreads
+                    << "; kWarpShape: " << Config::IndexLoader::kWarpTileShape
                     << std::endl
                     << "kDecodeNumPerThread: " << Config::kDecodeNumPerThread
                     << std::endl;
