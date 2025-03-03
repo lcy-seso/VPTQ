@@ -114,14 +114,31 @@ __global__ void ke_quant_gemv_v2(
     __copy_async();
     __syncthreads();
 
+    if (thread(0)) {
+      printf("\nstep =%d\n", step);
+    }
+
     /// === 2. decode, add residual, and scale on register === ///
-    /// advance the pointers to data for this thread
     typename KeTraits::Decoder decoder;
+    /// advance the pointers to shared memory data for the current thread
     int thd_offset = threadIdx.x * kNumPerThread;
-    decoder(&s_quant_weights[thd_offset * kVecLen],      //  output
+    decoder(&s_quant_weights[thd_offset * kVecLen],      // output
             s_codebook, s_codebook_res,                  // codebooks
             &s_ids[thd_offset], &s_res_ids[thd_offset],  // indices
             &s_scale_weights[thd_offset], &s_scale_bias[thd_offset]);
+    __syncthreads();
+
+    if (thread(0)) {
+      printf("[0]:\t");
+      for (int i = 0; i < kTileSize * kVecLen; ++i) {
+        printf("%.2f, ", to_float(s_quant_weights[i]));
+
+        if (i && (i + 1) % kVecLen == 0) {
+          printf("\n[%d]:\t", (i + 1) / kVecLen);
+        }
+      }
+      printf("\n\n");
+    }
 
     /// === 3. dot product and apply bias === ///
 

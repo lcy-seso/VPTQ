@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include "kernels/convert.cuh"  // for debug printing
 #include "kernels/copy/copy_traits.cuh"
 #include "kernels/copy/vectorized.cuh"
 #include "util/debug.cuh"
@@ -59,7 +60,6 @@ struct WeightDecoder {
     DType s, b;
 #pragma unroll
     for (int i = 0; i < kNumPerThread; ++i) {
-      // Compute offsets in codebooks
       const DType* main_codebook = &main_codebook_[reg_idx[i] * kVecLen];
       const DType* res_codebook = &res_codebook_[reg_res_idx[i] * kVecLen];
 
@@ -76,10 +76,25 @@ struct WeightDecoder {
         // TODO(ying): Replace with vectorized operation
         reg_vec[k] = s * (reg_vec[k] + reg_res_vec[k]) + b;
       }
+
       /// store the dequantized output from registers to shared memory
-#pragma unroll
+      // #pragma unroll
       for (int j = 0; j < kVecLen; j += kPackedNums) {
         vec_copyer(&reg_vec[j], &out[i * kVecLen + j]);
+      }
+
+      if (thread(33)) {
+        printf("[%d]\t", i);
+        for (int k = 0; k < kVecLen; ++k) {
+          printf("%.2f, ", to_float(reg_vec[k]));
+        }
+        printf("\n");
+
+        printf("[%d]\t", i);
+        for (int k = 0; k < kVecLen; ++k) {
+          printf("%.2f, ", to_float(out[i * kVecLen + k]));
+        }
+        printf("\n\n");
       }
     }
   }
