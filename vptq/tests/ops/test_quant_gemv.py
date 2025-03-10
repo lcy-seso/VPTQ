@@ -11,13 +11,29 @@ import torch
 import vptq
 
 
+def ground_truth(
+    x: torch.Tensor,
+    bias: torch.Tensor,
+    indices: torch.Tensor,
+    centroids: torch.Tensor,
+    residual_centroids: torch.Tensor,
+    scale_weights: torch.Tensor,
+    scale_bias: torch.Tensor,
+    vector_len: int,
+    num_codebooks: int,
+    num_centroids: int,
+    num_residual_centroids: int,
+    out_features: int,
+) -> torch.Tensor:
+    pass
+
+
 class TestQuantGemv(unittest.TestCase):
 
     def setUp(self):
         torch.manual_seed(1234)
 
         dtype = torch.bfloat16
-        # dtype = torch.float16
 
         device = torch.device("cuda", 0)
 
@@ -69,7 +85,7 @@ class TestQuantGemv(unittest.TestCase):
         self.scale_bias = torch.randn(*shape, device=device, dtype=dtype)
 
     def test(self):
-        out = vptq.ops.quant_gemv_v2(
+        out1 = vptq.ops.quant_gemv_v2(
             self.x,
             bias=self.bias,
             indices=self.indices,
@@ -81,9 +97,26 @@ class TestQuantGemv(unittest.TestCase):
             num_codebooks=self.num_codebooks,
             num_centroids=self.num_centroids,
             num_residual_centroids=self.num_res_centroids,
-            out_features=self.out_features,
+            out_features=self.out_features
         )
-        print(out)
+
+        out2 = self.ground_truth(
+            x=self.x,
+            bias=self.bias,
+            indices=self.indices,
+            centroids=self.centroids,
+            residual_centroids=self.res_centroids,
+            scale_weights=self.scale_weights,
+            scale_bias=self.scale_bias,
+            vector_len=self.vector_length,
+            num_codebooks=self.num_codebooks,
+            num_centroids=self.num_centroids,
+            num_residual_centroids=self.num_res_centroids,
+            out_features=self.out_features
+        )
+
+        print(out1)
+        print(out2)
 
 
 if __name__ == "__main__":
