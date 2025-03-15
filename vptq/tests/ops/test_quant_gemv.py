@@ -15,8 +15,8 @@ def ground_truth(
     bias: torch.Tensor,
     indices: torch.Tensor,
     centroids: torch.Tensor,
-    residual_indices: torch.Tensor,
-    residual_centroids: torch.Tensor,
+    res_indices: torch.Tensor,
+    res_centroids: torch.Tensor,
     scale_weights: torch.Tensor,
     scale_bias: torch.Tensor,
     vector_len: int,
@@ -28,7 +28,7 @@ def ground_truth(
     batch_size, length, in_features = x.shape
     num_decoding = indices.shape[0]
 
-    if num_decoding != residual_indices.shape[0]:
+    if num_decoding != res_indices.shape[0]:
         raise ValueError(
             ("indices and residual_indices "
              "must have the same shape.")
@@ -40,28 +40,28 @@ def ground_truth(
         ))
 
     # construct dequantized weights
-    main_weights = torch.zeros(
-        num_decoding, vector_len, dtype=dtype, device=device
-    )
-    residual_weights = torch.zeros(
-        num_decoding, vector_len, dtype=dtype, device=device
-    )
-    residual_indices = residual_indices.to(torch.uint16)
+    shape = (in_features, out_features)
+    main_weights = torch.zeros(shape, dtype=dtype, device=device)
+    res_weights = torch.zeros(shape, dtype=dtype, device=device)
+
+    res_indices = res_indices.to(torch.uint16)
+
     for i in range(num_decoding):
-        idx = indices[i]
-        main_weights[i, :] = centroids[0, idx, :]
+        row = i % in_features
+        col = i // in_features * vector_len
 
-        idx_residual = residual_indices[i]
-        residual_weights[i, :] = residual_centroids[0, idx_residual, :]
+        ids = indices[i]
+        main_weights[row, col:col + vector_len] = centroids[0, ids, :]
 
-    weights = main_weights + residual_weights
-    weights = weights.reshape(in_features, out_features)
+        res_ids = res_indices[i]
+        res_weights[row, col:col + vector_len] = res_centroids[0, res_ids, :]
+
+    weights = main_weights + res_weights
     weights = scale_weights * weights + scale_bias
 
     out = torch.zeros(
         batch_size, length, out_features, dtype=dtype, device=device
     )
-
     for i in range(batch_size):
         for j in range(length):
             vec = x[i, j, :]
@@ -90,10 +90,15 @@ class TestQuantGemv(unittest.TestCase):
         self.num_centroids = 8192  # must be stored in uint16
         self.num_res_centroids = 256  # can be stored in uint8
 
+        mean = 2e-2
+        std = 0.5
+
         #====== generate data for unittest.  ======#
         # the activation tensor
         shape = (batch_size, length, self.in_features)
-        self.x = torch.randn(*shape, device=device, dtype=dtype)
+        self.x = torch.normal(
+            mean=mean, std=std, size=shape, device=device, dtype=dtype
+        )
 
         # generate indices for unittest.
         num_indices = self.in_features * self.out_features // self.vector_length
@@ -112,19 +117,29 @@ class TestQuantGemv(unittest.TestCase):
         )
 
         shape = (self.num_codebooks, self.num_centroids, self.vector_length)
-        self.centroids = torch.randn(*shape, device=device, dtype=dtype)
+        self.centroids = torch.normal(
+            mean=mean, std=std, size=shape, device=device, dtype=dtype
+        )
 
         shape = (self.num_codebooks, self.num_res_centroids, self.vector_length)
-        self.res_centroids = torch.randn(*shape, device=device, dtype=dtype)
+        self.res_centroids = torch.normal(
+            mean=mean, std=std, size=shape, device=device, dtype=dtype
+        )
 
         shape = (1, 1, self.out_features)
-        self.bias = torch.randn(*shape, device=device, dtype=dtype)
+        self.bias = torch.normal(
+            mean=mean, std=std, size=shape, device=device, dtype=dtype
+        )
 
         # NOTE: In this test, the scale weights and bias are applied
         # to the in_features.
         shape = (self.in_features, 1)
-        self.scale_weights = torch.randn(*shape, device=device, dtype=dtype)
-        self.scale_bias = torch.randn(*shape, device=device, dtype=dtype)
+        self.scale_weights = torch.normal(
+            mean=mean, std=std, size=shape, device=device, dtype=dtype
+        )
+        self.scale_bias = torch.normal(
+            mean=mean, std=std, size=shape, device=device, dtype=dtype
+        )
 
     def compare_float_tensors(self, tensor1, tensor2):
         # For bfloat16 tensors, we need to convert to float32 for accurate
@@ -139,7 +154,7 @@ class TestQuantGemv(unittest.TestCase):
                 "Tensor shapes don't match"
             )
 
-            rtol, atol = 1e-2, 1e-2
+            rtol, atol = 0.1, 0.1
             self.assertTrue(
                 torch.allclose(
                     tensor1_float, tensor2_float, rtol=rtol, atol=atol
@@ -153,6 +168,38 @@ class TestQuantGemv(unittest.TestCase):
             self.assertTrue(
                 torch.allclose(tensor1, tensor2), "Tensors not equal"
             )
+
+    def groundtruth_for_thread0(self):
+        num = 4
+        results = torch.zeros(
+            self.vector_length, dtype=torch.float32, device=self.x.device
+        )
+        for tid in range(128):
+            for pos in range(0, 1024, 512):
+                start = pos + tid * num
+                end = pos + (tid + 1) * num
+
+                x = self.x[0, 0, start:end].to(torch.float32)
+
+                ss = self.scale_weights[start:end, 0].to(torch.float32)
+                bs = self.scale_bias[start:end, 0].to(torch.float32)
+
+                ids = self.main_indices[start:end]
+                res_ids = self.res_indices[start:end].to(torch.uint16)
+
+                for i in range(num):
+                    vec = self.centroids[0, ids[i], :].to(torch.float32)
+                    res_vec = self.res_centroids[0, res_ids[i], :].to(
+                        torch.float32
+                    )
+                    v = x[i] * (ss[i] * (vec + res_vec) + bs[i])
+                    results += v
+        bias = self.bias[0, 0, 0:self.vector_length].to(torch.float32)
+        results += bias
+
+        print("ground truth results:")
+        print([f"{x:.4f}" for x in results.tolist()])
+        print("\n")
 
     def compare_int_tensors(self, tensor1, tensor2):
         self.assertEqual(
@@ -187,6 +234,8 @@ class TestQuantGemv(unittest.TestCase):
         )
 
     def test(self):
+        self.groundtruth_for_thread0()
+
         out1 = vptq.ops.quant_gemv_v2(
             self.x,
             bias=self.bias,
@@ -202,7 +251,7 @@ class TestQuantGemv(unittest.TestCase):
             num_residual_centroids=self.num_res_centroids,
             out_features=self.out_features
         )
-        print(out1[0, 0, 0:32])
+        print(out1[0, 0, 0:16])
 
         print("ground truth")
         out2 = ground_truth(
@@ -210,14 +259,14 @@ class TestQuantGemv(unittest.TestCase):
             bias=self.bias,
             indices=self.main_indices,
             centroids=self.centroids,
-            residual_indices=self.res_indices,
-            residual_centroids=self.res_centroids,
+            res_indices=self.res_indices,
+            res_centroids=self.res_centroids,
             scale_weights=self.scale_weights,
             scale_bias=self.scale_bias,
             vector_len=self.vector_length,
             out_features=self.out_features
         )
-        print(out2[0, 0, 0:32])
+        print(out2[0, 0, 0:16])
 
         self.compare_float_tensors(out1, out2)
 

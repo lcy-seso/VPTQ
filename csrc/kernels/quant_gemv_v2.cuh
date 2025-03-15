@@ -157,6 +157,14 @@ __global__ void ke_quant_gemv_v2(DType* __restrict__ output,
   if (threadIdx.x < WARP_SIZE) shm[threadIdx.x] = 0.;
   __syncthreads();
 
+  // if (thread(33)) {
+  //   printf("block size = %d\n", blockDim.x);
+  //   for (int i = 0; i < kVecLen; ++i) {
+  //     printf("%.4f, ", to_float(results[i]));
+  //   }
+  //   printf("\n");
+  // }
+
   float val;
 #pragma unroll
   for (int i = 0; i < kVecLen; ++i) {
@@ -172,7 +180,7 @@ __global__ void ke_quant_gemv_v2(DType* __restrict__ output,
     typename KeTraits::VecStorer storer;
 
     for (int i = 0; i < kVecLen; i += KeTraits::kPackedNums)
-      storer(results, s_output);  // store register tile to shared
+      storer(results + i, s_output + i);  // store register tile to shared
 
     if (bias) {  // apply bias if available
       // FIXME(ying): replace with vectorized operation
@@ -182,6 +190,13 @@ __global__ void ke_quant_gemv_v2(DType* __restrict__ output,
     for (int i = 0; i < kVecLen; i += KeTraits::kPackedNums)
       storer(s_output + i, y + i);  // store shared tile to global
   }
+
+  // if (thread(0)) {
+  //   for (int i = 0; i < kVecLen; ++i) {
+  //     printf("%.4f, ", to_float(y[i]));
+  //   }
+  //   printf("\n");
+  // }
 
   return;
 }
