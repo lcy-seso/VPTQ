@@ -90,8 +90,6 @@ __global__ void ke_quant_gemv_v2(DType* __restrict__ output,
     typename KeTraits::ResCentroidTraits::Loader loader;
     loader(residual_centroids, s_codebook_res);
   }
-  __copy_async();
-  __syncthreads();
 
   if (bias) {  // load the bias if available.
     typename KeTraits::BiasLoader loader;
@@ -144,9 +142,10 @@ __global__ void ke_quant_gemv_v2(DType* __restrict__ output,
     // advance the pointers to shared memory data for the current thread
     int offset = threadIdx.x * kNum;
     decode(results,
-           s_inputs + offset,                   // input
-           s_ids + offset, s_codebook,          // indices and main codebook
-           s_res_ids + offset, s_codebook_res,  // indices and residual codebook
+           s_inputs + offset,           // input
+           s_ids + offset, s_codebook,  // indices and main codebook
+           s_res_ids + offset,
+           s_codebook_res,  // indices and residual codebook
            s_scale_weights + offset, s_scale_bias + offset,  // scale/bias
            idx, res_idx, xs, ss, bs, vec, res_vec);
   }
