@@ -138,7 +138,6 @@ __global__ void ke_quant_gemv_v2(DType* __restrict__ output,
 
     ///===== 2. decode, add residual, scale, dot product, accumulate results
     /// between tiles, apply bias on register =====///
-
     // advance the pointers to shared memory data for the current thread
     int offset = threadIdx.x * kNum;
     decode(results,

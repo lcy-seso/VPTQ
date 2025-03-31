@@ -13,8 +13,7 @@
 # export NVCC_THREADS=`nproc`
 
 # python3 setup.py clean
-python3 setup.py develop 2>&1 | tee build.log
-exit 0
+# python3 setup.py develop 2>&1 | tee build.log
 
 # TORCH_VERSION=`python -c "import torch; print(torch.__version__)"`
 # python3 setup.py build bdist_wheel \
@@ -66,7 +65,7 @@ cd ../../../
 
 if [ -f "$target_file" ]; then
    echo "running test..."
-   CUDA_VISIBLE_DEVICES=0 ./test.sh
+   ./test.sh
 else
    echo "libvptq.so not found"
 fi
