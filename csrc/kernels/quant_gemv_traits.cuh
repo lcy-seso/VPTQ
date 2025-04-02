@@ -36,6 +36,8 @@ struct SharedStorageImpl {
   static constexpr int kSmemSize =
       (kSizeCodebook + kSizeInputs + kSizeOut) * sizeof(DType) +
       kTileSize * sizeof(IdType) + kTileSize * sizeof(ResIdType);
+
+  static constexpr int kCodebookSharedSize = kSizeCodebook * sizeof(DType);
 };
 
 template <typename DType, const int kThreads, const int kNumCentroids,
@@ -72,10 +74,8 @@ struct CodebookTraitsImpl : public Base {
 }  // namespace
 
 template <typename DType, typename IdType, typename ResIdType,
-          const int kThreads,                        //
-          const int kTileSize_, const int kVecLen_,  //
-          const int kNumMainCentroids_, const int kNumResCentroids_,
-          typename Base = copy::AccessInfo<DType>>
+          const int kVecLen_, const int kNumMainCentroids_,
+          const int kNumResCentroids_, typename Base = copy::AccessInfo<DType>>
 struct QuantGemvKeTraits : public Base {
   ///===== constants =====///
   static constexpr int kVecLen = kVecLen_;
@@ -84,7 +84,9 @@ struct QuantGemvKeTraits : public Base {
   static constexpr int kNumResCentroids = kNumResCentroids_;
   static constexpr int kMainCodebookSize = kNumMainCentroids * kVecLen;
 
-  static constexpr int kTileSize = kTileSize_;
+  static constexpr int kTileSize = 1024;
+  static constexpr int kThreads = 256;
+
   static constexpr int kNumWarps = kThreads / WARP_SIZE;
 
   // Number of warps required to load a single input tile. This may be fewer

@@ -84,8 +84,7 @@ __global__ void ke_quant_gemv_v2(DType* __restrict__ output,
 
   ///===== 1. load data from global to shared memory =====///
   typename KeTraits::CodebookTraits::Loader loader;
-  // load the main centroids into shared memory
-  loader(centroids, s_codebook);
+  loader(centroids, s_codebook);  // load codebooks into shared memory
 
   if (bias) {  // load the bias if available.
     typename KeTraits::BiasLoader loader;
