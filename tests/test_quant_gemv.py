@@ -12,6 +12,7 @@ The -v flag enables verbose output and -s allows print statements to be
 displayed.
 """
 
+
 import pytest
 import torch
 
@@ -46,77 +47,7 @@ def _create_tensor(
     )
 
 
-def ground_truth(
-    x: torch.Tensor,
-    bias: torch.Tensor,
-    indices: torch.Tensor,
-    centroids: torch.Tensor,
-    res_indices: torch.Tensor,
-    res_centroids: torch.Tensor,
-    scale_weights: torch.Tensor,
-    scale_bias: torch.Tensor,
-    vector_len: int,
-    out_features: int,
-) -> torch.Tensor:
-    device = x.device
-    dtype = x.dtype
-
-    batch_size, length, in_features = x.shape
-    num_decoding = indices.shape[0]
-
-    if num_decoding != res_indices.shape[0]:
-        raise ValueError(
-            ("indices and residual_indices must have the same shape.")
-        )
-    if num_decoding != in_features * out_features // vector_len:
-        raise ValueError(
-            (
-                "indices must have the same shape as "
-                "in_features * out_features // vector_len."
-            )
-        )
-
-    # construct dequantized weights
-    shape = (in_features, out_features)
-    main_weights = torch.zeros(shape, dtype=dtype, device=device)
-    res_weights = torch.zeros(shape, dtype=dtype, device=device)
-
-    res_indices = res_indices.to(torch.uint16)
-
-    for i in range(num_decoding):
-        row = i % in_features
-        col = i // in_features * vector_len
-
-        ids = indices[i]
-        main_weights[row, col : col + vector_len] = centroids[0, ids, :]
-
-        res_ids = res_indices[i]
-        res_weights[row, col : col + vector_len] = res_centroids[0, res_ids, :]
-
-    weights = main_weights + res_weights
-    weights = scale_weights * weights + scale_bias
-
-    out = torch.zeros(
-        batch_size, length, out_features, dtype=dtype, device=device
-    )
-    for i in range(batch_size):
-        for j in range(length):
-            vec = x[i, j, :]
-            out[i, j, :] = vec @ weights
-
-    if bias is not None:
-        out += bias
-    return out
-
-
-@pytest.fixture
-def test_data(request):
-    """Fixture to generate test data with configurable parameters."""
-    torch.manual_seed(1234)
-
-    # Get parameters from the test request
-    params = request.param
-
+def _create_test_data(params: dict) -> dict:
     # Test parameters
     batch_size = params.get("batch_size", 1)
     length = params.get("length", 1)
@@ -137,15 +68,13 @@ def test_data(request):
     )
 
     centroids = _create_tensor(
-        (num_codebooks, num_centroids, vector_length), mean, std, dtype, device
-    )
-    res_centroids = _create_tensor(
-        (num_codebooks, num_res_centroids, vector_length),
+        (num_codebooks, num_centroids + num_res_centroids, vector_length),
         mean,
         std,
         dtype,
         device,
     )
+
     bias = None
     scale_weights = _create_tensor((in_features, 1), mean, std, dtype, device)
     scale_bias = _create_tensor((in_features, 1), mean, std, dtype, device)
@@ -160,7 +89,6 @@ def test_data(request):
         "indices": main_indices,
         "centroids": centroids,
         "residual_indices": res_indices,
-        "residual_centroids": res_centroids,
         "scale_weights": scale_weights,
         "scale_bias": scale_bias,
         "vector_len": vector_length,
@@ -194,93 +122,98 @@ def compare_float_tensors(tensor1: torch.Tensor, tensor2: torch.Tensor):
             raise ValueError("Tensors not equal")
 
 
-test_configs = [
-    # residual indices are stored in uint8
-    {
-        "name": "residual_indices_uint8",
-        "batch_size": 1,
-        "length": 1,
-        "in_features": 1024,
-        "out_features": 2048,
-        "vector_length": 8,
-        "num_centroids": 8192,
-        "num_res_centroids": 256,  #  indices are stored in uint8
-    },
-    # residual indices are stored in uint16
-    {
-        "name": "residual_indices_uint16",
-        "batch_size": 1,
-        "length": 1,
-        "in_features": 1024,
-        "out_features": 1024,
-        "vector_length": 8,
-        "num_centroids": 8192,
-        "num_res_centroids": 512,  #  indices are stored in uint16
-    },
-]
+def ground_truth(
+    x: torch.Tensor,
+    bias: torch.Tensor,
+    indices: torch.Tensor,
+    centroids: torch.Tensor,
+    residual_indices: torch.Tensor,
+    scale_weights: torch.Tensor,
+    scale_bias: torch.Tensor,
+    vector_len: int,
+    num_centroids: int,
+    num_residual_centroids: int,
+    out_features: int,
+    num_codebooks: int = 1,
+) -> torch.Tensor:
+    if num_residual_centroids == 0:
+        raise ValueError(
+            "This test requires num_residual_centroids to be greater than 0."
+        )
+    if num_codebooks != 1:
+        raise ValueError(
+            "This test requires num_codebooks to be greater than 0."
+        )
 
+    main_centroids = centroids[:, :num_centroids, :]
+    res_centroids = centroids[:, num_centroids:, :]
 
-@pytest.mark.parametrize("test_data", test_configs, indirect=True)
-def test_quant_gemv(test_data):
-    """
-    Test the quant_gemv operation against ground truth with different
-    configurations.
-    """
+    device = x.device
+    dtype = x.dtype
 
-    # Run ground truth
-    out1 = ground_truth(
-        x=test_data["x"],
-        bias=test_data["bias"],
-        indices=test_data["indices"],
-        centroids=test_data["centroids"],
-        res_indices=test_data["residual_indices"],
-        res_centroids=test_data["residual_centroids"],
-        scale_weights=test_data["scale_weights"],
-        scale_bias=test_data["scale_bias"],
-        vector_len=test_data["vector_len"],
-        out_features=test_data["out_features"],
+    batch_size, length, in_features = x.shape
+    num_decoding = indices.shape[0]
+
+    if num_decoding != residual_indices.shape[0]:
+        raise ValueError(
+            ("indices and residual_indices must have the same shape.")
+        )
+    if num_decoding != in_features * out_features // vector_len:
+        raise ValueError(
+            (
+                "indices must have the same shape as "
+                "in_features * out_features // vector_len."
+            )
+        )
+
+    # construct dequantized weights
+    shape = (in_features, out_features)
+    main_weights = torch.zeros(shape, dtype=dtype, device=device)
+    res_weights = torch.zeros(shape, dtype=dtype, device=device)
+
+    res_indices = residual_indices.to(torch.uint16)
+
+    for i in range(num_decoding):
+        row = i % in_features
+        col = i // in_features * vector_len
+
+        ids = indices[i]
+        main_weights[row, col : col + vector_len] = main_centroids[0, ids, :]
+
+        res_ids = res_indices[i]
+        res_weights[row, col : col + vector_len] = res_centroids[0, res_ids, :]
+
+    weights = main_weights + res_weights
+    weights = scale_weights * weights + scale_bias
+
+    out = torch.zeros(
+        batch_size, length, out_features, dtype=dtype, device=device
     )
+    for i in range(batch_size):
+        for j in range(length):
+            vec = x[i, j, :]
+            out[i, j, :] = vec @ weights
 
-    # Run the quant_gemv operation
-    out2 = vptq.ops.quant_gemv_v2(**test_data)
+    if bias is not None:
+        out += bias
+    return out
 
-    # Compare results
-    compare_float_tensors(out1, out2)
 
-    # Print sample outputs for debugging
-    start, end = 128, 144
-    print(f"\nTest configuration: {test_data.get('name', 'unnamed')}")
-    print("gemv kernel:")
-    print(out1[0, 0, start:end])
-    print("ground truth:")
-    print(out2[0, 0, start:end])
+@pytest.fixture
+def test_data(request):
+    """Fixture to generate test data with configurable parameters."""
+    torch.manual_seed(1234)
+    return _create_test_data(request.param)
 
 
 def run_test_with_config(config):
     """Run a single test with the given configuration."""
     print(f"\nRunning test with configuration: {config['name']}")
 
-    # Generate test data
-    test_data = create_test_data(config)
-
-    # Run the quant_gemv operation
+    test_data = _create_test_data(config)
     out1 = vptq.ops.quant_gemv_v2(**test_data)
+    out2 = ground_truth(**test_data)
 
-    # Run ground truth
-    out2 = ground_truth(
-        x=test_data["x"],
-        bias=test_data["bias"],
-        indices=test_data["indices"],
-        centroids=test_data["centroids"],
-        res_indices=test_data["residual_indices"],
-        res_centroids=test_data["residual_centroids"],
-        scale_weights=test_data["scale_weights"],
-        scale_bias=test_data["scale_bias"],
-        vector_len=test_data["vector_len"],
-        out_features=test_data["out_features"],
-    )
-
-    # Compare results
     try:
         compare_float_tensors(out1, out2)
         print("Test passed!")
@@ -297,61 +230,33 @@ def run_test_with_config(config):
     print("-" * 80)
 
 
-def create_test_data(config):
-    """Factory function to generate test data from config."""
-    torch.manual_seed(1234)
+test_configs = [
+    {  # residual indices are stored in uint8
+        "name": "residual_indices_uint8",
+        "batch_size": 1,
+        "length": 1,
+        "in_features": 1024,
+        "out_features": 2048,
+        "vector_length": 8,
+        "num_centroids": 8192,
+        "num_res_centroids": 256,  #  indices are stored in uint8
+    },
+    {  # residual indices are stored in uint16
+        "name": "residual_indices_uint16",
+        "batch_size": 1,
+        "length": 1,
+        "in_features": 1024,
+        "out_features": 1024,
+        "vector_length": 8,
+        "num_centroids": 8192,
+        "num_res_centroids": 512,  #  indices are stored in uint16
+    },
+]
 
-    # Test parameters
-    batch_size = config.get("batch_size", 1)
-    length = config.get("length", 1)
-    in_features = config.get("in_features", 1024)
-    out_features = config.get("out_features", 2048)
-    num_codebooks = config.get("num_codebooks", 1)
-    vector_length = config.get("vector_length", 8)
-    num_centroids = config.get("num_centroids", 8192)
-    num_res_centroids = config.get("num_res_centroids", 256)
-    mean = config.get("mean", 2e-2)
-    std = config.get("std", 0.5)
-    dtype = config.get("dtype", torch.bfloat16)
-    device = config.get("device", torch.device("cuda", 0))
 
-    # Generate test data
-    x = _create_tensor(
-        (batch_size, length, in_features), mean, std, dtype, device
-    )
-    centroids = _create_tensor(
-        (num_codebooks, num_centroids, vector_length), mean, std, dtype, device
-    )
-    res_centroids = _create_tensor(
-        (num_codebooks, num_res_centroids, vector_length),
-        mean,
-        std,
-        dtype,
-        device,
-    )
-    bias = None
-    scale_weights = _create_tensor((in_features, 1), mean, std, dtype, device)
-    scale_bias = _create_tensor((in_features, 1), mean, std, dtype, device)
-
-    num_indices = in_features * out_features // vector_length
-    main_indices = _create_indices(num_indices, num_centroids, device)
-    res_indices = _create_indices(num_indices, num_res_centroids, device)
-
-    return {
-        "x": x,
-        "bias": bias,
-        "indices": main_indices,
-        "centroids": centroids,
-        "residual_indices": res_indices,
-        "residual_centroids": res_centroids,
-        "scale_weights": scale_weights,
-        "scale_bias": scale_bias,
-        "vector_len": vector_length,
-        "num_codebooks": num_codebooks,
-        "num_centroids": num_centroids,
-        "num_residual_centroids": num_res_centroids,
-        "out_features": out_features,
-    }
+@pytest.mark.parametrize("test_data", test_configs, indirect=True)
+def test_quant_gemv(test_data):
+    run_test_with_config(test_data)
 
 
 def main():

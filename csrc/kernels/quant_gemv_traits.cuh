@@ -16,15 +16,11 @@ namespace {  /// functions, structs, and constants that are not intend to expose
              /// to the global scope
 
 template <typename DType, typename IdType, typename ResIdType,
-          const int kTileSize, const int kVecLen, const int kNumCentroids,
-          const int kNumResCentroids>
+          const int kTileSize, const int kVecLen, const int kNumCentroids>
 struct SharedStorageImpl {
   ///==== Shared memory for inputs ====///
   static constexpr int kSizeCodebook = kNumCentroids * kVecLen;
-  array_aligned<DType, kSizeCodebook, 128> codebook;  // 128-bits aligned
-
-  static constexpr int kSizeCodebookRes = kNumResCentroids * kVecLen;
-  array_aligned<DType, kSizeCodebookRes, 128> codebook_res;  // 128-bits aligned
+  array_aligned<DType, kSizeCodebook, 128> codebooks;  // 128-bits aligned
 
   // 3 stands for input tile, scale and bias.
   static constexpr int kSizeInputs = 3 * kTileSize;
@@ -38,19 +34,14 @@ struct SharedStorageImpl {
   array_aligned<DType, kSizeOut> output;
 
   static constexpr int kSmemSize =
-      (kSizeCodebook + kSizeCodebookRes + kSizeInputs + kSizeOut) *
-          sizeof(DType) +
+      (kSizeCodebook + kSizeInputs + kSizeOut) * sizeof(DType) +
       kTileSize * sizeof(IdType) + kTileSize * sizeof(ResIdType);
 };
 
 template <typename DType, const int kThreads, const int kNumCentroids,
           const int kVecLen, typename Base = copy::AccessInfo<DType>>
-struct CodebookTraits : public Base {
-  static_assert(kThreads % WARP_SIZE == 0,
-                "The number of threads must be divisible by the warp size.");
-
+struct CodebookTraitsImpl : public Base {
   static constexpr int kVecInBytes = kVecLen * sizeof(DType);
-  // TODO: To support a vector length of 12, this constraint can be relaxed.
   static_assert(Base::kCacheLineBytes % kVecInBytes == 0,
                 "The cache line size must be divisible by the vector size.");
 
@@ -83,13 +74,16 @@ struct CodebookTraits : public Base {
 template <typename DType, typename IdType, typename ResIdType,
           const int kThreads,                        //
           const int kTileSize_, const int kVecLen_,  //
-          const int kNumCentroids_, const int kNumResCentroids_,
+          const int kNumMainCentroids_, const int kNumResCentroids_,
           typename Base = copy::AccessInfo<DType>>
 struct QuantGemvKeTraits : public Base {
   ///===== constants =====///
   static constexpr int kVecLen = kVecLen_;
-  static constexpr int kNumCentroids = kNumCentroids_;
+
+  static constexpr int kNumMainCentroids = kNumMainCentroids_;
   static constexpr int kNumResCentroids = kNumResCentroids_;
+  static constexpr int kMainCodebookSize = kNumMainCentroids * kVecLen;
+
   static constexpr int kTileSize = kTileSize_;
   static constexpr int kNumWarps = kThreads / WARP_SIZE;
 
@@ -168,40 +162,31 @@ struct QuantGemvKeTraits : public Base {
                                          : kVecLen;
 
   ///===== allocate shared memory =====///
-  using SharedStorage =
-      SharedStorageImpl<DType, IdType, ResIdType, kTileSize, kVecLen,
-                        kNumCentroids, kNumResCentroids>;
+  static constexpr int kNumCentroids = kNumMainCentroids + kNumResCentroids;
+  using SharedStorage = SharedStorageImpl<DType, IdType, ResIdType, kTileSize,
+                                          kVecLen, kNumCentroids>;
 
   ///===== configurations for loading codebooks =====///
-  using MainCentroidTraits =
-      CodebookTraits<DType, kThreads, kNumCentroids, kVecLen>;
-  using ResCentroidTraits =
-      CodebookTraits<DType, kThreads, kNumResCentroids, kVecLen>;
+  using CodebookTraits =
+      CodebookTraitsImpl<DType, kThreads, kNumCentroids, kVecLen>;
 
   ///===== configurations for loading bias =====///
   using BiasLoader = copy::GlobalToSharedBiasLoader<DType, kVecLen>;
-  // Storer is defined for debugging purposes only
-  using BiasStorer = copy::SharedToGlobalBiasStorer<DType, kVecLen>;
 
   ///===== configurations for loading tiled input =====///
   using InputLoader = copy::GlobalToSharedInputLoader<DType, kTileSize>;
-  // Storer is defined for debugging purposes only
-  using InputStorer = copy::SharedToGlobalInputStorer<DType, kTileSize>;
 
   ///===== configurations for loading tiled indices =====///
   using IdLoader = copy::GlobalToSharedInputLoader<IdType, kTileSize>;
-  using IdStorer = copy::SharedToGlobalInputStorer<IdType, kTileSize>;
 
   // loading tiled residual indices which may have different data type
   // (like uint8_t) from the main indices (like uint16_t)
   using ResIdLoader = copy::GlobalToSharedInputLoader<ResIdType, kTileSize>;
-  using ResIdStorer = copy::SharedToGlobalInputStorer<ResIdType, kTileSize>;
 
   ///===== dequantizing weights and computing gemv on registers =====///
   using IdLoaderS2R = copy::PackedCopy<IdType, kDequantNumPerThread>;
   using ResIdLoaderS2R = copy::PackedCopy<ResIdType, kDequantNumPerThread>;
   using ScaleLoaderS2R = copy::PackedCopy<DType, kDequantNumPerThread>;
-
   using VecLoaderS2R = copy::PackedCopy<DType, kPackedNums>;
   using VecStorer = copy::PackedCopy<DType, kPackedNums>;
 
@@ -211,6 +196,14 @@ struct QuantGemvKeTraits : public Base {
   using Decode =
       DecodeImpl<IdLoaderS2R, ResIdLoaderS2R, ScaleLoaderS2R, VecLoaderS2R,
                  kDequantNumPerThread, kVecLen, kPackedNums>;
+
+#if defined(DEBUG)
+  // Storer is defined for debugging purposes only
+  using BiasStorer = copy::SharedToGlobalBiasStorer<DType, kVecLen>;
+  using InputStorer = copy::SharedToGlobalInputStorer<DType, kTileSize>;
+  using IdStorer = copy::SharedToGlobalInputStorer<IdType, kTileSize>;
+  using ResIdStorer = copy::SharedToGlobalInputStorer<ResIdType, kTileSize>;
+#endif
 };
 
 }  // namespace vptq::kernels

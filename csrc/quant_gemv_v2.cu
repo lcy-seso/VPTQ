@@ -28,10 +28,9 @@ torch::Tensor quant_gemv_v2(
     const torch::Tensor& indices,              //
     const torch::Tensor& centroids,            //
     const c10::optional<torch::Tensor>& residual_indices,
-    const c10::optional<torch::Tensor>& residual_centroids,
     const c10::optional<torch::Tensor>& scale_weights,
     const c10::optional<torch::Tensor>& scale_bias,  //
-    int64_t out_features) {
+    int64_t num_res_centroids, int64_t out_features) {
   CHECK_INPUT(act);
   CHECK_INPUT(indices);
   CHECK_INPUT(centroids);
@@ -52,7 +51,8 @@ torch::Tensor quant_gemv_v2(
   const int64_t in_features = act.size(2);
 
   const int64_t num_codebooks = centroids.size(0);
-  const int64_t num_centroids = centroids.size(1);
+  const int64_t total_centroids = centroids.size(1);
+  const int64_t num_centroids = total_centroids - num_res_centroids;
   const int64_t vec_len = centroids.size(2);
 
   TORCH_CHECK_LT(batch * seq_length, 16)
@@ -61,22 +61,6 @@ torch::Tensor quant_gemv_v2(
   TORCH_CHECK(
       vec_len == 4 || vec_len == 8 || vec_len == 16,
       "Supported vector length in vectorized quantization: 4, 8, or 16.");
-
-  int64_t num_res_centroids = 0;
-  if (residual_centroids.has_value()) {
-    CHECK_INPUT(residual_centroids.value());
-    TORCH_CHECK_EQ(residual_centroids.value().ndimension(), 3);
-    TORCH_CHECK_EQ(residual_centroids.value().size(0), 1)
-        << "Only support one codebook.";
-    TORCH_CHECK_EQ(residual_centroids.value().size(2), vec_len)
-        << "The vector length of the residual centroids must be the same as "
-           "the main centroids.";
-
-    num_res_centroids = residual_centroids.value().size(1);
-    // once `residual_centroids` has value, `residual_indices`
-    // must have value as well
-    CHECK_INPUT(residual_indices.value());
-  }
 
   if (scale_weights.has_value()) {
     CHECK_INPUT(scale_weights.value());
@@ -112,12 +96,6 @@ torch::Tensor quant_gemv_v2(
     VPTQ_DISPATCH_VEC_LENGTH(vec_len, [&] {
       VPTQ_DISPATCH_NUM_CENTROIDS(num_centroids, [&] {
         VPTQ_DISPATCH_RES_NUM_CENTROIDS(num_res_centroids, [&] {
-          const DType* residual_centroids_ptr =
-              residual_centroids.has_value()
-                  ? reinterpret_cast<const DType*>(
-                        residual_centroids.value().data_ptr())
-                  : nullptr;
-
           const ResIdType* residual_indices_ptr =
               residual_indices.has_value()
                   ? reinterpret_cast<const ResIdType*>(
@@ -169,8 +147,8 @@ torch::Tensor quant_gemv_v2(
               reinterpret_cast<const DType*>(act.data_ptr()), bias_ptr,
               indices.data_ptr<IdType>(),
               reinterpret_cast<const DType*>(centroids.data_ptr()),
-              residual_indices_ptr, residual_centroids_ptr, scale_weights_ptr,
-              scale_bias_ptr, batch, seq_length, in_features, out_features);
+              residual_indices_ptr, scale_weights_ptr, scale_bias_ptr, batch,
+              seq_length, in_features, out_features);
         });
       });
     });

@@ -281,7 +281,6 @@ def quant_gemv_v2(
     indices: torch.Tensor,
     centroids: torch.Tensor,
     residual_indices: Optional[torch.Tensor],
-    residual_centroids: Optional[torch.Tensor],
     scale_weights: Optional[torch.Tensor],
     scale_bias: Optional[torch.Tensor],
     vector_len: int,
@@ -311,8 +310,6 @@ def quant_gemv_v2(
                    (num_codebooks, num_centroids, vector_len).
         residual_indices: (optional) Tensor[uint16|uint8], the indices for
                           the residual quantization component.
-        residual_centroids: (optional) Tensor[fp16|bf16], has a shape of
-                            (num_codebooks, num_residual_centroids, vector_len).
         scale_weights: (optional) Tensor[fp16|bf16], has a shape of
                        (in_feature, 1), the scale factor for the quantized
                        weight.
@@ -322,18 +319,19 @@ def quant_gemv_v2(
         num_codebooks: int, the number of codebooks.
         num_centroids: int, the number of centroids.
         num_residual_centroids: int, the number of residual centroids.
+                                0 indicates that the residual quantization
+                                component is disabled.
         out_features: int, the number of output features.
     """
 
     if not __cuda_ops_installed:
         raise RuntimeError("CUDA kernels are not found.")
 
-    centroids_ = centroids.view(num_codebooks, num_centroids, vector_len)
-
-    residual_centroids_ = None
-    if residual_centroids is not None:
-        shape = (num_codebooks, num_residual_centroids, vector_len)
-        residual_centroids_ = residual_centroids.view(shape)
+    # the main codebook and the residual codebook (if enabled) are concatenated
+    # together into a single codebook.
+    centroids_ = centroids.view(
+        num_codebooks, num_centroids + num_residual_centroids, vector_len
+    )
 
     if x.numel() // x.shape[-1] >= 16:
         raise RuntimeError(
@@ -349,8 +347,8 @@ def quant_gemv_v2(
         indices,
         centroids_,
         residual_indices,
-        residual_centroids_,
         scale_weights,
         scale_bias,
+        num_residual_centroids,
         out_features,
     )
