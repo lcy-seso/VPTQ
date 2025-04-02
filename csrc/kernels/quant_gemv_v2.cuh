@@ -20,7 +20,6 @@ __global__ void ke_quant_gemv_v2(DType* __restrict__ output,
                                  const IdType* __restrict__ indices,
                                  const DType* __restrict__ centroids,
                                  const ResIdType* __restrict__ residual_indices,
-                                 const DType* __restrict__ residual_centroids,
                                  const DType* __restrict__ scale_weights,
                                  const DType* __restrict__ scale_bias,
                                  int64_t batch, int64_t seq_length,
@@ -58,8 +57,10 @@ __global__ void ke_quant_gemv_v2(DType* __restrict__ output,
 
   DType* s_output = smem.output.data();
 
-  DType* s_codebook = smem.codebook.data();
-  DType* s_codebook_res = smem.codebook_res.data();
+  // codebooks
+  DType* s_codebook = smem.codebooks.data();
+  DType* s_codebook_res = s_codebook + KeTraits::kMainCodebookSize;
+
   DType* s_inputs = smem.inputs.data();
   IdType* s_ids = smem.indices.data();
   ResIdType* s_res_ids = smem.res_indices.data();
@@ -82,14 +83,9 @@ __global__ void ke_quant_gemv_v2(DType* __restrict__ output,
   DType res_vec[kVecLen];  // register for dequantized residual weights
 
   ///===== 1. load data from global to shared memory =====///
-  typename KeTraits::MainCentroidTraits::Loader loader;
+  typename KeTraits::CodebookTraits::Loader loader;
   // load the main centroids into shared memory
   loader(centroids, s_codebook);
-  if (residual_centroids) {
-    // load the residual centroids into shared memory if available
-    typename KeTraits::ResCentroidTraits::Loader loader;
-    loader(residual_centroids, s_codebook_res);
-  }
 
   if (bias) {  // load the bias if available.
     typename KeTraits::BiasLoader loader;
@@ -141,10 +137,9 @@ __global__ void ke_quant_gemv_v2(DType* __restrict__ output,
     // advance the pointers to shared memory data for the current thread
     int offset = threadIdx.x * kNum;
     decode(results,
-           s_inputs + offset,           // input
-           s_ids + offset, s_codebook,  // indices and main codebook
-           s_res_ids + offset,
-           s_codebook_res,  // indices and residual codebook
+           s_inputs + offset,                   // input
+           s_ids + offset, s_codebook,          // indices and main codebook
+           s_res_ids + offset, s_codebook_res,  // indices and residual codebook
            s_scale_weights + offset, s_scale_bias + offset,  // scale/bias
            idx, res_idx, xs, ss, bs, vec, res_vec);
   }
