@@ -1,10 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+
 #pragma once
+#include <cuda_runtime.h>
 
 namespace vptq {
-template <typename T, typename X, typename Y>
-HOST T divup(const X x, const Y y) {
-  return static_cast<T>((x + y - 1) / y);
-}
+
+int GetMaxSmemPerBlock(int device_id);
+
+int GetSharedMemPerSM(int device_id);
+
 }  // namespace vptq

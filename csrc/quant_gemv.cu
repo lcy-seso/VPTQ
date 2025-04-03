@@ -3,7 +3,6 @@
 
 #include "kernels/quant_gemv.cuh"
 #include "util/common.h"
-#include "util/math_utils.h"
 
 namespace vptq {
 

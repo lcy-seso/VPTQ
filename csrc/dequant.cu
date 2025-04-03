@@ -3,7 +3,6 @@
 
 #include "kernels/dequant.cuh"
 #include "util/common.h"
-#include "util/math_utils.h"
 
 namespace vptq {
 
