@@ -117,12 +117,10 @@ torch::Tensor quant_gemv_v2(
                                                   scale_bias.value().data_ptr())
                                             : nullptr;
 
-          static constexpr int kTileSize = 512;
           // NOTE: IdType and ResIdType are declared in the dispatch macros.
           using Config =
-              kernels::QuantGemvKeTraits<DType, IdType, ResIdType, kThreads,
-                                         kTileSize, kVecLen, kNumCentroids,
-                                         kNumResCentroids>;
+              kernels::QuantGemvKeTraits<DType, IdType, ResIdType, kVecLen,
+                                         kNumCentroids, kNumResCentroids>;
 
           using SharedStorage = Config::SharedStorage;
           int smem_size = SharedStorage::kSmemSize;
@@ -138,9 +136,9 @@ torch::Tensor quant_gemv_v2(
           }
 
           // FIXME(ying): refine the choice of threads in a thread block.
-          // in the current implementation, kThreads is defined in the dispatch
-          // macros according to the num_res_centroids.
-          dim3 threads(kThreads, 1, 1);
+          // in the current implementation, kThreads is defined in the
+          // dispatch macros according to the num_res_centroids.
+          dim3 threads(Config::kThreads, 1, 1);
 
           kernel<<<blocks, threads, smem_size, stream>>>(
               reinterpret_cast<DType*>(output.mutable_data_ptr()),

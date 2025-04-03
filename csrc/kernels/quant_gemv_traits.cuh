@@ -72,8 +72,7 @@ struct CodebookTraitsImpl : public Base {
 }  // namespace
 
 template <typename DType, typename IdType, typename ResIdType,
-          const int kThreads,                        //
-          const int kTileSize_, const int kVecLen_,  //
+          const int kVecLen_,  //
           const int kNumMainCentroids_, const int kNumResCentroids_,
           typename Base = copy::AccessInfo<DType>>
 struct QuantGemvKeTraits : public Base {
@@ -84,7 +83,9 @@ struct QuantGemvKeTraits : public Base {
   static constexpr int kNumResCentroids = kNumResCentroids_;
   static constexpr int kMainCodebookSize = kNumMainCentroids * kVecLen;
 
-  static constexpr int kTileSize = kTileSize_;
+  static constexpr int kTileSize = 2048;
+  static constexpr int kThreads = 512;
+
   static constexpr int kNumWarps = kThreads / WARP_SIZE;
 
   // Number of warps required to load a single input tile. This may be fewer
